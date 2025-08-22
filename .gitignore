@@ -35,3 +35,22 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.env
+venv/
+.env
+
+# Data
+data/raw/*
+data/processed/*
+!data/raw/.keep
+!data/processed/.keep
+
+# VS Code
+.vscode/
+
