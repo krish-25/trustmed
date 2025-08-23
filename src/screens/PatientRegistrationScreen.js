@@ -1,6 +1,6 @@
 // src/screens/PatientRegistrationScreen.js
 
-import React, { useState, useContext } from 'react';
+import React, { useState } from 'react';
 import {
   SafeAreaView,
   KeyboardAvoidingView,
@@ -15,11 +15,9 @@ import {
   Alert
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
-import { PatientContext } from '../context/PatientContext';
+import { BASE_URL } from '../config';
 
 export default function PatientRegistrationScreen() {
-  const { addPatient } = useContext(PatientContext);
-
   const [basic, setBasic] = useState({
     name: '',
     age: '',
@@ -35,24 +33,23 @@ export default function PatientRegistrationScreen() {
     hr: ''
   });
   const [modalVisible, setModalVisible] = useState(false);
+  const [error, setError] = useState('');
 
   const handleBasic = (key, value) =>
     setBasic(prev => ({ ...prev, [key]: value }));
   const handleVitals = (key, value) =>
     setVitals(prev => ({ ...prev, [key]: value }));
 
-  const handleSubmit = () => {
-    // contact validation
+  const handleSubmit = async () => {
+    // validations
     if (!/^\d{10}$/.test(basic.contact)) {
       Alert.alert('Invalid Contact', 'Contact number must be exactly 10 digits.');
       return;
     }
-    // gender validation
     if (!basic.gender) {
       Alert.alert('Select Gender', 'Please choose Male, Female or Other.');
       return;
     }
-    // BP validation: both parts present
     if (!bpSys || !bpDia) {
       Alert.alert('Invalid BP', 'Enter both systolic and diastolic values.');
       return;
@@ -63,15 +60,28 @@ export default function PatientRegistrationScreen() {
       bp: `${bpSys}/${bpDia}`,
       ...vitals
     };
-    addPatient(record);
 
-    // reset form
-    setBasic({ name: '', age: '', gender: '', contact: '', address: '' });
-    setBpSys('');
-    setBpDia('');
-    setVitals({ spo2: '', temperature: '', hr: '' });
+    try {
+      const res = await fetch(`${BASE_URL}/patients`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(record)
+      });
 
-    setModalVisible(true);
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || 'Failed to register patient');
+      }
+
+      // success
+      setModalVisible(true);
+      setBasic({ name: '', age: '', gender: '', contact: '', address: '' });
+      setBpSys('');
+      setBpDia('');
+      setVitals({ spo2: '', temperature: '', hr: '' });
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   const contactValid = /^\d{10}$/.test(basic.contact);
@@ -103,7 +113,7 @@ export default function PatientRegistrationScreen() {
             <TextInput
               style={styles.input}
               value={basic.age}
-              onChangeText={v => handleBasic('age', v)}
+              onChangeText={v => handleBasic('age', v.replace(/[^0-9]/g, ''))}
               placeholder="e.g. 30"
               keyboardType="numeric"
             />
@@ -209,7 +219,7 @@ export default function PatientRegistrationScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Confirmation Modal */}
+      {/* Success Modal */}
       <Modal
         visible={modalVisible}
         transparent
@@ -223,6 +233,26 @@ export default function PatientRegistrationScreen() {
             <TouchableOpacity
               style={styles.modalButton}
               onPress={() => setModalVisible(false)}
+            >
+              <Text style={styles.modalButtonText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Error Modal */}
+      <Modal
+        transparent
+        visible={!!error}
+        animationType="fade"
+        onRequestClose={() => setError('')}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={[styles.modalText, { color: 'red' }]}>{error}</Text>
+            <TouchableOpacity
+              style={[styles.modalButton, { backgroundColor: '#FF3B30' }]}
+              onPress={() => setError('')}
             >
               <Text style={styles.modalButtonText}>OK</Text>
             </TouchableOpacity>

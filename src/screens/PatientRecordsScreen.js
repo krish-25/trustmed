@@ -1,6 +1,6 @@
 // src/screens/PatientRecordsScreen.js
 
-import React, { useContext, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import {
   SafeAreaView,
   SectionList,
@@ -8,17 +8,46 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Alert
+  Alert,
+  ActivityIndicator,
+  RefreshControl
 } from 'react-native';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
-import { RecordContext } from '../context/RecordContext';
+import { BASE_URL } from '../config';
 
 export default function PatientRecordsScreen() {
-  const { records } = useContext(RecordContext);
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Group records by date (YYYY-MM-DD), newest first
+  // 🔹 Fetch all patient consultation records from backend
+  const fetchRecords = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${BASE_URL}/records`);
+      if (!res.ok) throw new Error('Failed to fetch patient records');
+      const data = await res.json();
+      setRecords(data);
+    } catch (err) {
+      Alert.alert('Error', err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchRecords();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchRecords();
+    setRefreshing(false);
+  };
+
+  // 🔹 Group records by date
   const sections = useMemo(() => {
     const groups = {};
     records.forEach(rec => {
@@ -47,9 +76,12 @@ export default function PatientRecordsScreen() {
     });
   }, [records]);
 
-  const generatePDF = async rec => {
+  // 🔹 Generate PDF for a specific patient
+const generatePDF = async (record) => {
+  try {
     const today = new Date();
-const formattedDate = `${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${today.getFullYear()}`;
+    const formattedDate = `${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${today.getFullYear()}`;
+
     const html = `<!DOCTYPE html>
 <html lang="hi">
 <head>
@@ -262,10 +294,10 @@ const formattedDate = `${String(today.getDate()).padStart(2, '0')}-${String(toda
       <hr>
       <div class="section2">
         <div class="section21">
-          <div class="vitalsp">BP<div class="vitals">${rec.consultation.bp}</div></div>
-          <div class="vitalsp">HR<div class="vitals">${rec.consultation.hr}</div></div>
-          <div class="vitalsp">Temp.<div class="vitals">${rec.consultation.temp}</div></div>
-          <div class="vitalsp">SpO₂<div class="vitals">${rec.consultation.spo2}</div></div>
+          <div class="vitalsp">BP<div class="vitals">${record.consultation.bp}</div></div>
+          <div class="vitalsp">HR<div class="vitals">${record.consultation.hr}</div></div>
+          <div class="vitalsp">Temp.<div class="vitals">${record.consultation.temp}</div></div>
+          <div class="vitalsp">SpO₂<div class="vitals">${record.consultation.spo2}</div></div>
         </div>
         <div class="section22">
         <span class="name3">Investigations-</span>
@@ -322,49 +354,49 @@ const formattedDate = `${String(today.getDate()).padStart(2, '0')}-${String(toda
       <div class="section6">
         <div class="line1">
           Name:
-          <div class="line11">${rec.registration.name}</div>
+          <div class="line11">${record.registration.name}</div>
           Date:
           <div class="line12">${formattedDate}</div>
         </div>
         <div class="line2">
           Age/Gender:
-          <div class="line21">${rec.registration.age}/${rec.registration.gender}</div>
+          <div class="line21">${record.registration.age}/${record.registration.gender}</div>
           Mob:
-          <div class="line22">${rec.registration.mobile}</div>
+          <div class="line22">${record.registration.mobile}</div>
         </div>
         <div class="line3">
           Add:
-          <div class="line31">${rec.registration.address}</div>
+          <div class="line31">${record.registration.address}</div>
         </div>
       </div>
       <div class="section7">
         <div class="consult-block">
           <div class="consult-title">Chief Complaints</div>
-          <div>${rec.consultation.chiefComplaints || '—'}</div>
+          <div>${record.consultation.chiefComplaints || '—'}</div>
         </div>
         <div class="consult-block">
           <div class="consult-title">Past Medical History</div>
-          <div>${rec.consultation.pastHistory || '—'}</div>
+          <div>${record.consultation.pastHistory || '—'}</div>
         </div>
         <div class="consult-block">
           <div class="consult-title">Allergies (if any)</div>
-          <div>${rec.consultation.allergies || '—'}</div>
+          <div>${record.consultation.allergies || '—'}</div>
         </div>
         <div class="consult-block">
           <div class="consult-title">Examination</div>
-          <div>${rec.consultation.examination || '—'}</div>
+          <div>${record.consultation.examination || '—'}</div>
         </div>
         <div class="consult-block">
           <div class="consult-title">Provisional Diagnosis</div>
-          <div>${rec.consultation.diagnosis || '—'}</div>
+          <div>${record.consultation.diagnosis || '—'}</div>
         </div>
         <div class="consult-block">
           <div class="consult-title">Treatment</div>
-          <div>${rec.consultation.treatment || '—'}</div>
+          <div>${record.consultation.treatment || '—'}</div>
         </div>
         <div class="consult-block">
           <div class="consult-title">Follow-up Date</div>
-          <div>${rec.consultation.followUpDate || '—'}</div>
+          <div>${record.consultation.followUpDate || '—'}</div>
         </div>
       </div>
     </div>
@@ -388,26 +420,31 @@ const formattedDate = `${String(today.getDate()).padStart(2, '0')}-${String(toda
 </body>
 </html> `;
 
-    try {
-      // 1) render to temp file
-      const { uri: tempUri } = await Print.printToFileAsync({ html });
-      // 2) copy into DocumentDirectory for sharing
-      const fileName = `${rec.registration.name.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
-      const finalUri = FileSystem.documentDirectory + fileName;
-      await FileSystem.copyAsync({ from: tempUri, to: finalUri });
-      // 3) open share/print dialog
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(finalUri, {
-          mimeType: 'application/pdf',
-          dialogTitle: 'Print or download record'
-        });
-      } else {
-        Alert.alert('Sharing unavailable');
-      }
-    } catch (err) {
-      Alert.alert('PDF Error', err.message);
+    const { uri: tempUri } = await Print.printToFileAsync({ html });
+    const fileName = `${record.registration.name.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
+    const finalUri = FileSystem.documentDirectory + fileName;
+    await FileSystem.copyAsync({ from: tempUri, to: finalUri });
+
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(finalUri, {
+        mimeType: 'application/pdf',
+        dialogTitle: 'Download record'
+      });
+    } else {
+      Alert.alert('Sharing unavailable');
     }
-  };
+  } catch (err) {
+    Alert.alert('PDF Error', err.message);
+  }
+};
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.root}>
+        <ActivityIndicator size="large" color="#70C1B3" style={{ marginTop: 20 }} />
+      </SafeAreaView>
+    );
+  }
 
   if (!records.length) {
     return (
@@ -421,7 +458,7 @@ const formattedDate = `${String(today.getDate()).padStart(2, '0')}-${String(toda
     <SafeAreaView style={styles.root}>
       <SectionList
         sections={sections}
-        keyExtractor={item => item.patientId + item.date}
+        keyExtractor={(item, index) => item.patientId + index}
         renderSectionHeader={({ section: { title } }) => (
           <Text style={styles.sectionHeader}>{title}</Text>
         )}
@@ -439,6 +476,9 @@ const formattedDate = `${String(today.getDate()).padStart(2, '0')}-${String(toda
           </View>
         )}
         contentContainerStyle={styles.list}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
       />
     </SafeAreaView>
   );

@@ -1,4 +1,3 @@
-// src/screens/SalesEntryScreen.js
 import React, { useContext, useState } from 'react';
 import {
   View,
@@ -13,6 +12,7 @@ import {
 import { Picker } from '@react-native-picker/picker';
 import { Ionicons } from '@expo/vector-icons';
 import { StockContext } from '../context/StockContext';
+import { BASE_URL } from '../config';
 
 export default function SalesEntryScreen({ navigation }) {
   const { stock, setStock } = useContext(StockContext);
@@ -50,13 +50,29 @@ export default function SalesEntryScreen({ navigation }) {
     setUnits('');
   };
 
-  const updateStock = () => {
-    const updated = stock.map(m => {
-      const e = entries.find(x => x.id === m.id);
-      return e ? { ...m, quantity: m.quantity - e.sold } : m;
-    });
-    setStock(updated);
-    navigation.goBack();
+  const updateStock = async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/sales`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || 'Failed to record sales');
+      }
+
+      const updated = stock.map(m => {
+        const e = entries.find(x => x.id === m.id);
+        return e ? { ...m, quantity: m.quantity - e.sold } : m;
+      });
+
+      setStock(updated);
+      navigation.goBack();
+    } catch (err) {
+      setError(err.message);
+    }
   };
 
   const renderEntry = ({ item, index }) => (
@@ -71,7 +87,6 @@ export default function SalesEntryScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Error Modal */}
       <Modal
         transparent
         visible={!!error}
@@ -91,7 +106,6 @@ export default function SalesEntryScreen({ navigation }) {
         </View>
       </Modal>
 
-      {/* Form Card */}
       <View style={styles.formCard}>
         <Text style={styles.label}>Select Medicine</Text>
         <View style={styles.dropdown}>
@@ -135,7 +149,6 @@ export default function SalesEntryScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Sales Detail Card */}
       <View style={styles.historyCard}>
         <Text style={styles.historyTitle}>Sales Detail</Text>
         <View style={styles.billContainer}>
@@ -164,7 +177,6 @@ export default function SalesEntryScreen({ navigation }) {
     </View>
   );
 }
-
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f2f2f2' },

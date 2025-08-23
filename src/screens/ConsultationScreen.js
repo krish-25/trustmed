@@ -1,6 +1,6 @@
 // src/screens/ConsultationScreen.js
 
-import React, { useState, useContext, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   SafeAreaView,
   View,
@@ -20,14 +20,11 @@ import DateTimePicker, {
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
 import * as FileSystem from 'expo-file-system';
-import { PatientContext } from '../context/PatientContext';
-import { RecordContext } from '../context/RecordContext';
+import { BASE_URL } from '../config';
 
 export default function ConsultationScreen() {
-  const { patients, updatePatient, removePatient } = useContext(PatientContext);
-  const { addRecord } = useContext(RecordContext);
-
-  const current = patients[0] || null;
+  const [queue, setQueue] = useState([]);
+  const current = queue[0] || null;
 
   // vitals
   const [bp, setBp] = useState('');
@@ -46,13 +43,27 @@ export default function ConsultationScreen() {
   // follow-up date
   const [followupDate, setFollowupDate] = useState(new Date());
   const [showIOSPicker, setShowIOSPicker] = useState(false);
-  
 
   // modal + PDF URI
   const [modalVisible, setModalVisible] = useState(false);
   const [pdfUri, setPdfUri] = useState('');
 
-  // whenever the ‘current’ patient changes, reseed fields
+  // fetch queue
+  const fetchQueue = async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/patients/queue`);
+      const data = await res.json();
+      setQueue(data);
+    } catch (e) {
+      console.error('Queue fetch failed:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchQueue();
+  }, []);
+
+  // reseed fields when current patient changes
   useEffect(() => {
     if (!current) return;
     setBp(current.bp || '');
@@ -82,18 +93,31 @@ export default function ConsultationScreen() {
     }
   };
 
+  // helpers for vitals styling
+  const getBpStyle = (bpValue) => {
+    if (!bpValue) return {};
+    const [sys, dia] = bpValue.split('/').map(Number);
+    if (sys > 139 || dia > 89) {
+      return { color: 'red', fontWeight: 'bold' };
+    }
+    return {};
+  };
+  const getSpo2Style = (val) =>
+    val && Number(val) < 94 ? { color: 'red', fontWeight: 'bold' } : {};
+  const getTempStyle = (val) =>
+    val && Number(val) > 98.6 ? { color: 'red', fontWeight: 'bold' } : {};
+  const getHrStyle = (val) =>
+    val && Number(val) > 100 ? { color: 'red', fontWeight: 'bold' } : {};
+
   const handleSubmit = async () => {
     if (!current) {
       Alert.alert('Error', 'No patient in consultation.');
       return;
     }
 
-    // 1) update stored patient vitals
-    updatePatient(current.id, { bp, spo2, temperature, hr });
-
-    // 2) snapshot record
+    // 1) build record
     const record = {
-      patientId: current.id,
+      patientId: current._id,
       date: new Date().toISOString(),
       registration: {
         name: current.name,
@@ -116,39 +140,56 @@ export default function ConsultationScreen() {
         followupDate: followupDate.toISOString().split('T')[0]
       }
     };
-    addRecord(record);
-
-    // 3) remove from queue
-    removePatient(current.id);
-
-    // 4) build HTML
-    const html = `
-  <html>
-    <head>
-    
-    </head>
-    <body>
-      <h1>Patient Consultation Summary</h1>
-    </body>
-  </html>
-`;
 
     try {
-      // 5) generate PDF into cache
-      const { uri: cacheUri } = await Print.printToFileAsync({ html });
+      // 2) save record to backend
+      const res = await fetch(`${BASE_URL}/records`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(record)
+      });
+      if (!res.ok) throw new Error('Failed to save record');
 
-      // 6) move to DocumentDirectory (Android share requires doc dir)
-      const fileName = `${record.registration.name
-        .replace(/\s+/g, '_')}
-        _${Date.now()}.pdf`.trim();
+      // 3) mark patient as consulted
+      await fetch(`${BASE_URL}/patients/queue/${current._id}/consulted`, {
+        method: 'PATCH'
+      });
+
+      // 4) remove from local queue
+      setQueue(prev => prev.filter(p => p._id !== current._id));
+
+      // 5) generate PDF
+      const html = `
+        <html>
+          <body>
+            <h1>Patient Consultation Summary</h1>
+            <p><b>Name:</b> ${current.name}</p>
+            <p><b>Age/Gender:</b> ${current.age} / ${current.gender}</p>
+            <p><b>BP:</b> ${bp}</p>
+            <p><b>SPO2:</b> ${spo2}</p>
+            <p><b>Temp:</b> ${temperature}</p>
+            <p><b>HR:</b> ${hr}</p>
+            <h3>Consultation Notes</h3>
+            <p><b>Chief Complaints:</b> ${chiefComplaints}</p>
+            <p><b>Medical History:</b> ${medicalHistory}</p>
+            <p><b>Allergies:</b> ${allergies}</p>
+            <p><b>Examination:</b> ${examination}</p>
+            <p><b>Diagnosis:</b> ${provisionalDiagnosis}</p>
+            <p><b>Treatment:</b> ${treatment}</p>
+            <p><b>Follow-up Date:</b> ${followupDate.toLocaleDateString()}</p>
+          </body>
+        </html>
+      `;
+      const { uri: cacheUri } = await Print.printToFileAsync({ html });
+      const fileName = `${current.name.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
       const destUri = FileSystem.documentDirectory + fileName;
       await FileSystem.copyAsync({ from: cacheUri, to: destUri });
       setPdfUri(destUri);
 
-      // 7) show modal
+      // 6) show modal
       setModalVisible(true);
     } catch (e) {
-      Alert.alert('PDF Error', e.message);
+      Alert.alert('Error', e.message);
     }
   };
 
@@ -181,11 +222,8 @@ export default function ConsultationScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.select({ ios: 0, android: 20 })}
       >
-        <ScrollView
-          contentContainerStyle={styles.container}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* patient letterhead header */}
+        <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+          {/* patient header */}
           <View style={styles.header}>
             <Text style={styles.headerName}>{current.name}</Text>
             <View style={styles.headerRow}>
@@ -196,7 +234,7 @@ export default function ConsultationScreen() {
               <View style={styles.vitalItem}>
                 <Text style={styles.vitalLabel}>BP</Text>
                 <TextInput
-                  style={styles.vitalInput}
+                  style={[styles.vitalInput, getBpStyle(bp)]}
                   value={bp}
                   onChangeText={setBp}
                   placeholder="120/80"
@@ -205,7 +243,7 @@ export default function ConsultationScreen() {
               <View style={styles.vitalItem}>
                 <Text style={styles.vitalLabel}>SPO2</Text>
                 <TextInput
-                  style={styles.vitalInput}
+                  style={[styles.vitalInput, getSpo2Style(spo2)]}
                   value={spo2}
                   onChangeText={setSpo2}
                   keyboardType="numeric"
@@ -216,7 +254,7 @@ export default function ConsultationScreen() {
               <View style={styles.vitalItem}>
                 <Text style={styles.vitalLabel}>Temp</Text>
                 <TextInput
-                  style={styles.vitalInput}
+                  style={[styles.vitalInput, getTempStyle(temperature)]}
                   value={temperature}
                   onChangeText={setTemperature}
                   keyboardType="numeric"
@@ -225,7 +263,7 @@ export default function ConsultationScreen() {
               <View style={styles.vitalItem}>
                 <Text style={styles.vitalLabel}>HR</Text>
                 <TextInput
-                  style={styles.vitalInput}
+                  style={[styles.vitalInput, getHrStyle(hr)]}
                   value={hr}
                   onChangeText={setHr}
                   keyboardType="numeric"
@@ -236,31 +274,11 @@ export default function ConsultationScreen() {
 
           {/* consultation form */}
           {[
-            {
-              label: 'Chief Complaints',
-              value: chiefComplaints,
-              setter: setChiefComplaints
-            },
-            {
-              label: 'Past Medical History',
-              value: medicalHistory,
-              setter: setMedicalHistory
-            },
-            {
-              label: 'Allergies (if any)',
-              value: allergies,
-              setter: setAllergies
-            },
-            {
-              label: 'Examination',
-              value: examination,
-              setter: setExamination
-            },
-            {
-              label: 'Provisional Diagnosis',
-              value: provisionalDiagnosis,
-              setter: setProvisionalDiagnosis
-            },
+            { label: 'Chief Complaints', value: chiefComplaints, setter: setChiefComplaints },
+            { label: 'Past Medical History', value: medicalHistory, setter: setMedicalHistory },
+            { label: 'Allergies (if any)', value: allergies, setter: setAllergies },
+            { label: 'Examination', value: examination, setter: setExamination },
+            { label: 'Provisional Diagnosis', value: provisionalDiagnosis, setter: setProvisionalDiagnosis },
             { label: 'Treatment', value: treatment, setter: setTreatment }
           ].map((sec, i) => (
             <View key={i} style={styles.card}>
@@ -278,13 +296,8 @@ export default function ConsultationScreen() {
           {/* follow-up date */}
           <View style={styles.card}>
             <Text style={styles.label}>Follow-up Date</Text>
-            <TouchableOpacity
-              style={styles.dateInput}
-              onPress={openDatePicker}
-            >
-              <Text style={styles.dateText}>
-                {followupDate.toLocaleDateString()}
-              </Text>
+            <TouchableOpacity style={styles.dateInput} onPress={openDatePicker}>
+              <Text style={styles.dateText}>{followupDate.toLocaleDateString()}</Text>
             </TouchableOpacity>
             {Platform.OS === 'ios' && showIOSPicker && (
               <DateTimePicker
@@ -301,29 +314,18 @@ export default function ConsultationScreen() {
           </View>
 
           {/* submit */}
-          <TouchableOpacity
-            style={styles.submitBtn}
-            onPress={handleSubmit}
-          >
+          <TouchableOpacity style={styles.submitBtn} onPress={handleSubmit}>
             <Text style={styles.submitText}>Submit Consultation</Text>
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
 
       {/* modal */}
-      <Modal
-        visible={modalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={onModalOk}
-      >
+      <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={onModalOk}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalText}>Patient Record Saved.</Text>
-            <TouchableOpacity
-              style={styles.modalButton}
-              onPress={onModalOk}
-            >
+            <TouchableOpacity style={styles.modalButton} onPress={onModalOk}>
               <Text style={styles.modalButtonText}>OK</Text>
             </TouchableOpacity>
           </View>
@@ -335,48 +337,16 @@ export default function ConsultationScreen() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F2F2F2' },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center'
-  },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { fontSize: 18, color: '#999' },
   container: { padding: 20, paddingBottom: 40 },
-
-  header: {
-    backgroundColor: '#70C1B3',
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 20,
-    elevation: 4
-  },
-  headerName: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFF'
-  },
-  headerRow: {
-    flexDirection: 'row',
-    marginTop: 4
-  },
-  headerText: {
-    color: '#E0F2F1',
-    fontSize: 16,
-    marginRight: 16
-  },
-  vitalsRow: {
-    flexDirection: 'row',
-    marginTop: 12
-  },
-  vitalItem: {
-    flex: 1,
-    marginRight: 12
-  },
-  vitalLabel: {
-    color: '#E0F2F1',
-    fontSize: 14,
-    marginBottom: 4
-  },
+  header: { backgroundColor: '#70C1B3', padding: 16, borderRadius: 8, marginBottom: 20, elevation: 4 },
+  headerName: { fontSize: 20, fontWeight: '700', color: '#FFF' },
+  headerRow: { flexDirection: 'row', marginTop: 4 },
+  headerText: { color: '#E0F2F1', fontSize: 16, marginRight: 16 },
+  vitalsRow: { flexDirection: 'row', marginTop: 12 },
+  vitalItem: { flex: 1, marginRight: 12 },
+  vitalLabel: { color: '#E0F2F1', fontSize: 14, marginBottom: 4 },
   vitalInput: {
     backgroundColor: '#FFF',
     borderRadius: 6,
@@ -384,7 +354,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     fontSize: 16
   },
-
   card: {
     backgroundColor: '#FFF',
     borderRadius: 10,
@@ -396,12 +365,7 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3
   },
-  label: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#555',
-    marginBottom: 8
-  },
+  label: { fontSize: 16, fontWeight: '500', color: '#555', marginBottom: 8 },
   input: {
     borderWidth: 1,
     borderColor: '#CCC',
@@ -411,11 +375,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#333'
   },
-  textArea: {
-    height: 100,
-    textAlignVertical: 'top'
-  },
-
+  textArea: { height: 100, textAlignVertical: 'top' },
   dateInput: {
     borderWidth: 1,
     borderColor: '#CCC',
@@ -424,18 +384,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center'
   },
   dateText: { fontSize: 16, color: '#333' },
-
   submitBtn: {
     backgroundColor: '#70C1B3',
     paddingVertical: 16,
     borderRadius: 10,
     alignItems: 'center'
   },
-  submitText: {
-    color: '#FFF',
-    fontSize: 17,
-    fontWeight: '600'
-  },
+  submitText: { color: '#FFF', fontSize: 17, fontWeight: '600' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
@@ -462,9 +417,5 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 24
   },
-  modalButtonText: {
-    color: '#FFF',
-    fontSize: 16,
-    fontWeight: '600'
-  }
+  modalButtonText: { color: '#FFF', fontSize: 16, fontWeight: '600' }
 });

@@ -1,77 +1,118 @@
-// src/screens/OutOfStockScreen.js
-import React, { useContext, useMemo } from 'react';
-import { SafeAreaView, View, Text, FlatList, StyleSheet } from 'react-native';
-import { StockContext } from '../context/StockContext';
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  RefreshControl
+} from 'react-native';
+import { BASE_URL } from '../config';
 
 export default function OutOfStockScreen() {
-  const { stock } = useContext(StockContext);
+  const [outOfStock, setOutOfStock] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
 
-  const outOfStock = useMemo(() => {
-    return stock.filter(m => m.quantity === 0);
-  }, [stock]);
+  const fetchOutOfStock = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${BASE_URL}/stock`);
+      if (!res.ok) throw new Error('Failed to fetch stock data');
+      const data = await res.json();
+      const filtered = data.filter(item => item.quantity === 0);
+      setOutOfStock(filtered);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchOutOfStock();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchOutOfStock();
+    setRefreshing(false);
+  };
 
   const renderItem = ({ item }) => (
-    <View style={styles.card}>
-      <Text style={styles.name}>{item.name}</Text>
-      <Text style={styles.qty}>0 units</Text>
+    <View style={styles.itemRow}>
+      <Text style={styles.itemText}>{item.name}</Text>
+      <Text style={styles.itemQty}>Out of Stock</Text>
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.root}>
-      <FlatList
-        data={outOfStock}
-        keyExtractor={item => item.id}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>All medicines in stock!</Text>
-        }
-      />
-    </SafeAreaView>
+    <View style={styles.container}>
+      <Text style={styles.title}>Out of Stock Medicines</Text>
+
+      {loading ? (
+        <ActivityIndicator size="large" color="#70C1B3" style={{ marginTop: 20 }} />
+      ) : error ? (
+        <Text style={styles.errorText}>{error}</Text>
+      ) : outOfStock.length === 0 ? (
+        <Text style={styles.emptyText}>All medicines are in stock 🎉</Text>
+      ) : (
+        <FlatList
+          data={outOfStock}
+          keyExtractor={item => item.id.toString()}
+          renderItem={renderItem}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        />
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
+  container: {
     flex: 1,
-    backgroundColor: '#F2F2F2',
-    paddingHorizontal: 12,
+    backgroundColor: '#f2f2f2',
+    padding: 16
   },
-  listContent: {
-    paddingBottom: 20,
-    marginVertical: 16
+  title: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 12,
+    alignSelf: 'center'
   },
-  card: {
+  itemRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFF',
-    borderRadius: 10,
-    padding: 16,
-    marginBottom: 12,
-    marginHorizontal: 20,         // 👈 horizontal margins added!
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: '#FFE5E5',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginBottom: 8
   },
-  name: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-  },
-  qty: {
+  itemText: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#D32F2F',
+    fontWeight: '600',
+    color: '#333'
+  },
+  itemQty: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#D9534F'
   },
   emptyText: {
-    textAlign: 'center',
-    color: '#999',
     fontSize: 16,
-    marginTop: 40,
+    color: '#555',
+    textAlign: 'center',
+    marginTop: 24
   },
+  errorText: {
+    fontSize: 16,
+    color: '#FF3B30',
+    textAlign: 'center',
+    marginTop: 24
+  }
 });
-

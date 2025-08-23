@@ -1,143 +1,111 @@
-import React, { useContext, useMemo, useState } from 'react';
-import {
-  SafeAreaView,
-  View,
-  Text,
-  TextInput,
-  FlatList,
-  TouchableOpacity,
-  StyleSheet
-} from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { StockContext } from '../context/StockContext';
+import React, { useEffect, useState } from 'react';
 
-export default function StockListScreen() {
-  const { stock } = useContext(StockContext);
-  const [searchQuery, setSearchQuery] = useState('');
+const StockListScreen = () => {
+  const [stockItems, setStockItems] = useState([]);
+  const [newItem, setNewItem] = useState({ name: '', quantity: '' });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    return q
-      ? stock.filter(m => m.name.toLowerCase().includes(q))
-      : stock;
-  }, [searchQuery, stock]);
+  // Fetch stock items on mount
+  useEffect(() => {
+    fetch('/stock')
+      .then(res => res.json())
+      .then(data => setStockItems(data))
+      .catch(() => setError('Failed to load stock'));
+  }, []);
 
-  const renderItem = ({ item }) => (
-    <View style={styles.card}>
-      <Text style={styles.name}>{item.name}</Text>
-      <Text style={styles.qty}>{item.quantity} units</Text>
-    </View>
-  );
+  const handleAddStock = () => {
+    if (!newItem.name || !newItem.quantity) return;
+
+    setLoading(true);
+    fetch('/stock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: newItem.name,
+        quantity: parseInt(newItem.quantity)
+      })
+    })
+      .then(res => res.json())
+      .then(data => {
+        setStockItems(prev => [...prev, data]);
+        setNewItem({ name: '', quantity: '' });
+      })
+      .catch(() => setError('Failed to add stock'))
+      .finally(() => setLoading(false));
+  };
+
+  const handleUpdateQuantity = (id, quantity) => {
+    fetch(`/stock/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantity: parseInt(quantity) })
+    })
+      .then(res => res.json())
+      .then(updated => {
+        setStockItems(prev =>
+          prev.map(item => (item._id === id ? updated : item))
+        );
+      })
+      .catch(() => setError('Failed to update quantity'));
+  };
 
   return (
-    <SafeAreaView style={styles.root}>
-      <View style={styles.searchContainer}>
-        <Ionicons name="search" size={20} color="#888" />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search medicines..."
-          placeholderTextColor="#888"
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-      </View>
-      <View style={styles.listContainer}>
-        <FlatList
-          data={filtered}
-          keyExtractor={i => i.id}
-          renderItem={renderItem}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <Text style={styles.empty}>No medicines found.</Text>
-          }
-          contentContainerStyle={{ paddingBottom: 20 }}
-        />
-      </View>
-      <View style={styles.footer}>
-        <TouchableOpacity style={styles.addBtn}>
-          <Text style={styles.addBtnText}>Add to Store</Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
-  );
-}
+    <div style={{ padding: '2rem' }}>
+      <h2>Medicine Stock</h2>
 
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: '#F2F2F2'
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    margin: 20,
-    paddingHorizontal: 16,
-    height: 50,
-    backgroundColor: '#FFF',
-    borderRadius: 10,
-    // shadow
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 2
-  },
-  searchInput: {
-    flex: 1,
-    marginLeft: 8,
-    fontSize: 16,
-    color: '#333'
-  },
-  listContainer: {
-    flex: 1,
-    marginHorizontal: 20
-  },
-  card: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFF',
-    borderRadius: 10,
-    padding: 16,
-    marginBottom: 12,
-    // shadow
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3
-  },
-  name: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333'
-  },
-  qty: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#555'
-  },
-  empty: {
-    textAlign: 'center',
-    color: '#999',
-    fontSize: 16,
-    marginTop: 40
-  },
-  footer: {
-    padding: 20,
-    backgroundColor: '#F2F2F2',
-    borderTopWidth: 1,
-    borderColor: '#EEE'
-  },
-  addBtn: {
-    backgroundColor: '#70C1B3',
-    paddingVertical: 16,
-    borderRadius: 10,
-    alignItems: 'center'
-  },
-  addBtnText: {
-    color: '#FFF',
-    fontSize: 17,
-    fontWeight: '600'
-  }
-});
+      {error && <p style={{ color: 'red' }}>{error}</p>}
+
+      <div style={{ marginBottom: '1rem' }}>
+        <input
+          type="text"
+          placeholder="Medicine name"
+          value={newItem.name}
+          onChange={e => setNewItem({ ...newItem, name: e.target.value })}
+          style={{ marginRight: '1rem' }}
+        />
+        <input
+          type="number"
+          placeholder="Quantity"
+          value={newItem.quantity}
+          onChange={e => setNewItem({ ...newItem, quantity: e.target.value })}
+          style={{ marginRight: '1rem' }}
+        />
+        <button onClick={handleAddStock} disabled={loading}>
+          {loading ? 'Adding...' : 'Add Stock'}
+        </button>
+      </div>
+
+      <table border="1" cellPadding="10" style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th>Medicine</th>
+            <th>Quantity</th>
+            <th>Update</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stockItems.map(item => (
+            <tr key={item._id}>
+              <td>{item.name}</td>
+              <td>
+                <input
+                  type="number"
+                  defaultValue={item.quantity}
+                  onBlur={e => handleUpdateQuantity(item._id, e.target.value)}
+                />
+              </td>
+              <td>
+                <button onClick={() => handleUpdateQuantity(item._id, item.quantity)}>
+                  Save
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+export default StockListScreen;

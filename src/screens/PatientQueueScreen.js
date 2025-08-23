@@ -1,73 +1,97 @@
 // src/screens/PatientQueueScreen.js
 
-import React, { useContext, useRef, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   SafeAreaView,
   FlatList,
   View,
   Text,
   StyleSheet,
-  Animated
+  ActivityIndicator,
+  RefreshControl
 } from 'react-native';
-import { PatientContext } from '../context/PatientContext';
+import { BASE_URL } from '../config';
 
 export default function PatientQueueScreen() {
-  const { patients } = useContext(PatientContext);
+  const [patients, setPatients] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
 
-  // Animated value for blinking
-  const blinkOpacity = useRef(new Animated.Value(1)).current;
+  const fetchQueue = async () => {
+    try {
+      setError('');
+      setLoading(true);
+      const res = await fetch(`${BASE_URL}/patients/queue`);
+      if (!res.ok) throw new Error('Failed to fetch patient queue');
+      const data = await res.json();
+      setPatients(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    // Start blinking animation loop once
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(blinkOpacity, {
-          toValue: 0,
-          duration: 500,
-          useNativeDriver: true
-        }),
-        Animated.timing(blinkOpacity, {
-          toValue: 1,
-          duration: 500,
-          useNativeDriver: true
-        })
-      ])
-    ).start();
-  }, [blinkOpacity]);
+    fetchQueue();
+  }, []);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchQueue();
+    setRefreshing(false);
+  };
 
   const renderItem = ({ item, index }) => {
     const isActive = index === 0;
-    const Indicator = isActive ? Animated.View : View;
-    const indicatorStyle = isActive
-      ? [styles.indicator, styles.indicatorActive, { opacity: blinkOpacity }]
-      : styles.indicator;
 
     return (
       <View style={styles.card}>
-        <Indicator style={indicatorStyle} />
-
         <View style={styles.info}>
           <Text style={styles.name}>{item.name}</Text>
           <View style={styles.details}>
             <Text style={styles.detailText}>{item.age} yrs</Text>
             <Text style={styles.detailText}>{item.gender}</Text>
+            {item.contact && <Text style={styles.detailText}>{item.contact}</Text>}
           </View>
         </View>
+
+        <Text
+          style={[
+            styles.status,
+            isActive ? styles.consulting : styles.waiting
+          ]}
+        >
+          {isActive ? 'Consulting' : 'Queued'}
+        </Text>
       </View>
     );
   };
 
   return (
     <SafeAreaView style={styles.root}>
-      <FlatList
-        data={patients}
-        keyExtractor={(_, i) => i.toString()}
-        renderItem={renderItem}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={
-          <Text style={styles.empty}>No patients registered.</Text>
-        }
-      />
+      {loading ? (
+        <ActivityIndicator
+          size="large"
+          color="#70C1B3"
+          style={{ marginTop: 20 }}
+        />
+      ) : error ? (
+        <Text style={styles.error}>{error}</Text>
+      ) : patients.length === 0 ? (
+        <Text style={styles.empty}>No patients registered.</Text>
+      ) : (
+        <FlatList
+          data={patients}
+          keyExtractor={(item, i) => item.id?.toString() || i.toString()}
+          renderItem={renderItem}
+          contentContainerStyle={styles.list}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -94,16 +118,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3
   },
-  indicator: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: 'transparent',
-    marginRight: 12
-  },
-  indicatorActive: {
-    backgroundColor: '#70C1B3'
-  },
   info: {
     flex: 1
   },
@@ -114,17 +128,41 @@ const styles = StyleSheet.create({
   },
   details: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     marginTop: 4
   },
   detailText: {
     marginRight: 16,
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '500',
     color: '#555'
+  },
+  status: {
+    fontSize: 14,
+    fontWeight: '700',
+    alignSelf: 'center',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+    textTransform: 'capitalize'
+  },
+  waiting: {
+    backgroundColor: '#C8E6C9',
+    color: '#2E7D32'
+  },
+  consulting: {
+    backgroundColor: '#FFE082',
+    color: '#333'
   },
   empty: {
     textAlign: 'center',
     color: '#999',
+    marginTop: 40,
+    fontSize: 16
+  },
+  error: {
+    textAlign: 'center',
+    color: '#FF3B30',
     marginTop: 40,
     fontSize: 16
   }
