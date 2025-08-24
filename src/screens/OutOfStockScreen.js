@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   RefreshControl
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { BASE_URL } from '../config';
 
 export default function OutOfStockScreen() {
@@ -17,27 +18,30 @@ export default function OutOfStockScreen() {
 
   const fetchOutOfStock = async () => {
     try {
-      setLoading(true);
-      const res = await fetch(`${BASE_URL}/stock`);
-      if (!res.ok) throw new Error('Failed to fetch stock data');
+      const res = await fetch(`${BASE_URL}/stock/out-of-stock`);
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
       const data = await res.json();
-      const filtered = data.filter(item => item.quantity === 0);
-      setOutOfStock(filtered);
+      setOutOfStock(data);
+      setError('');
     } catch (err) {
-      setError(err.message);
+      console.error('OutOfStock fetch failed:', err);
+      setError(err.message || 'Unexpected error');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  useEffect(() => {
-    fetchOutOfStock();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(true);
+      fetchOutOfStock();
+    }, [])
+  );
 
-  const onRefresh = async () => {
+  const onRefresh = () => {
     setRefreshing(true);
-    await fetchOutOfStock();
-    setRefreshing(false);
+    fetchOutOfStock();
   };
 
   const renderItem = ({ item }) => (
@@ -60,7 +64,7 @@ export default function OutOfStockScreen() {
       ) : (
         <FlatList
           data={outOfStock}
-          keyExtractor={item => item.id.toString()}
+          keyExtractor={item => item._id.toString()}
           renderItem={renderItem}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />

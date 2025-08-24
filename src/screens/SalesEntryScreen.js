@@ -1,4 +1,5 @@
-import React, { useContext, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -7,25 +8,52 @@ import {
   FlatList,
   StyleSheet,
   Modal,
-  Platform
+  Platform,
+  Alert
 } from 'react-native';
 import { Picker } from '@react-native-picker/picker';
 import { Ionicons } from '@expo/vector-icons';
-import { StockContext } from '../context/StockContext';
 import { BASE_URL } from '../config';
 
-export default function SalesEntryScreen({ navigation }) {
-  const { stock, setStock } = useContext(StockContext);
-  const [selectedMed, setSelectedMed] = useState(stock[0]?.id);
+export default function SalesEntryScreen() {
+  const [stockList, setStockList] = useState([]);
+  const [selectedMed, setSelectedMed] = useState(null);
   const [units, setUnits] = useState('');
   const [entries, setEntries] = useState([]);
   const [error, setError] = useState('');
 
+  const fetchStock = async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/stock`);
+      const data = await res.json();
+      setStockList(data);
+      setSelectedMed(data[0]?._id || null);
+    } catch {
+      setError('Failed to load stock list');
+    }
+  };
+
+  useEffect(() => {
+    fetchStock();
+  }, []);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      fetchStock();
+    }, [])
+  );
+
   const addEntry = () => {
     const saleQty = Number(units);
-    if (!units || saleQty <= 0) return;
+    if (!units || saleQty <= 0 || !selectedMed) return;
 
-    const originalQty = stock.find(m => m.id === selectedMed)?.quantity || 0;
+    const med = stockList.find(m => m._id === selectedMed);
+    if (!med) {
+      setError('Selected medicine not found in stock list');
+      return;
+    }
+
+    const originalQty = med.quantity || 0;
     const existing = entries.find(e => e.id === selectedMed);
     const alreadySold = existing ? existing.sold : 0;
     const available = originalQty - alreadySold;
@@ -38,42 +66,54 @@ export default function SalesEntryScreen({ navigation }) {
     setEntries(prev => {
       if (existing) {
         return prev.map(e =>
-          e.id === selectedMed
-            ? { ...e, sold: e.sold + saleQty }
-            : e
+          e.id === selectedMed ? { ...e, sold: e.sold + saleQty } : e
         );
       } else {
-        const med = stock.find(m => m.id === selectedMed);
-        return [...prev, { id: med.id, name: med.name, sold: saleQty }];
+        return [...prev, { id: med._id, name: med.name, sold: saleQty }];
       }
     });
     setUnits('');
   };
 
-  const updateStock = async () => {
-    try {
-      const res = await fetch(`${BASE_URL}/sales`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ entries })
-      });
+const updateStock = async () => {
+  try {
+    // 🔹 Step 1: Update Stock
+    const stockRes = await fetch(`${BASE_URL}/stock/bulk/update`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(entries)
+    });
 
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.message || 'Failed to record sales');
-      }
+    const stockData = await stockRes.json();
+    if (!stockRes.ok) throw new Error(stockData.error || 'Stock update failed');
 
-      const updated = stock.map(m => {
-        const e = entries.find(x => x.id === m.id);
-        return e ? { ...m, quantity: m.quantity - e.sold } : m;
-      });
+    // 🔹 Step 2: Record Consolidated Sale
+    const salePayload = {
+      items: entries.map(e => ({
+        medicineId: e.id,
+        medicineName: e.name,
+        quantity: e.sold
+      })),
+      timestamp: new Date().toISOString()
+    };
 
-      setStock(updated);
-      navigation.goBack();
-    } catch (err) {
-      setError(err.message);
-    }
-  };
+    const salesRes = await fetch(`${BASE_URL}/sales`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(salePayload)
+    });
+
+    const salesData = await salesRes.json();
+    if (!salesRes.ok) throw new Error(salesData.error || 'Sales recording failed');
+
+    // 🔹 Step 3: Reset UI
+    setEntries([]);
+    Alert.alert('Success', 'Stock updated and sale recorded');
+  } catch (err) {
+    console.error('Update failed:', err.message);
+    setError(err.message);
+  }
+};
 
   const renderEntry = ({ item, index }) => (
     <View style={[
@@ -120,8 +160,8 @@ export default function SalesEntryScreen({ navigation }) {
             ]}
             itemStyle={styles.pickerItem}
           >
-            {stock.map(m => (
-              <Picker.Item key={m.id} label={m.name} value={m.id} />
+            {stockList.map(m => (
+              <Picker.Item key={m._id} label={m.name} value={m._id} />
             ))}
           </Picker>
           <Ionicons
@@ -137,9 +177,7 @@ export default function SalesEntryScreen({ navigation }) {
           style={styles.input}
           keyboardType="numeric"
           value={units}
-          onChangeText={text =>
-            setUnits(text.replace(/[^0-9]/g, ''))
-          }
+          onChangeText={text => setUnits(text.replace(/[^0-9]/g, ''))}
           placeholder="e.g. 5"
           placeholderTextColor="#888"
         />
@@ -153,12 +191,8 @@ export default function SalesEntryScreen({ navigation }) {
         <Text style={styles.historyTitle}>Sales Detail</Text>
         <View style={styles.billContainer}>
           <View style={styles.billHeaderRow}>
-            <Text style={[styles.entryText, styles.billHeaderText]}>
-              Medicine
-            </Text>
-            <Text style={[styles.entryText, styles.billHeaderText]}>
-              Qty
-            </Text>
+            <Text style={[styles.entryText, styles.billHeaderText]}>Medicine</Text>
+            <Text style={[styles.entryText, styles.billHeaderText]}>Qty</Text>
           </View>
           <FlatList
             data={entries}
@@ -171,7 +205,7 @@ export default function SalesEntryScreen({ navigation }) {
         </View>
 
         <TouchableOpacity style={styles.updateButton} onPress={updateStock}>
-          <Text style={styles.updateText}>Update Stocks</Text>
+          <Text style={styles.updateText}>Add Sale</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -180,7 +214,6 @@ export default function SalesEntryScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f2f2f2' },
-
   formCard: {
     margin: 16,
     padding: 16,
@@ -192,7 +225,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3
   },
-
   historyCard: {
     flex: 1,
     marginHorizontal: 16,
@@ -206,7 +238,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3
   },
-
   historyTitle: {
     fontSize: 18,
     fontWeight: '600',
@@ -214,14 +245,12 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     alignSelf: 'center'
   },
-
   label: {
     fontSize: 18,
     fontWeight: '500',
     color: '#333',
     marginTop: 8
   },
-
   dropdown: {
     position: 'relative',
     borderWidth: 1,
@@ -257,7 +286,6 @@ const styles = StyleSheet.create({
     top: '50%',
     marginTop: -10
   },
-
   input: {
     borderWidth: 1,
     borderColor: '#ccc',
@@ -268,7 +296,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     color: '#333'
   },
-
   addButton: {
     marginTop: 16,
     backgroundColor: '#70C1B3',
